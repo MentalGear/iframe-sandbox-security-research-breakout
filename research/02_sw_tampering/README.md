@@ -2,29 +2,28 @@
 
 ## Summary
 
-The `iframe-sandbox` uses a Service Worker on the `sandbox.localhost` origin to act as a network firewall. However, because the inner frame shares the same origin (`sandbox.localhost`) and has `allow-same-origin` enabled, code running within the sandbox has full access to the `navigator.serviceWorker` API.
+The `iframe-sandbox` uses a Service Worker on the `sandbox.localhost` origin. Because the inner frame shares the same origin (`sandbox.localhost`) and has `allow-same-origin` enabled, code running within the sandbox has full access to the `navigator.serviceWorker` API.
 
-This allows a malicious payload to simply unregister the Service Worker. Once unregistered, the "Firewall" is effectively turned off. While the CSP might still restrict *where* requests can go, the *logging* and *filtering* provided by the SW are bypassed. Combined with the CSP bypass (Research 01), this grants total network control.
+This allows a malicious payload to unregister the Service Worker.
 
 ## Reproduction Steps
 
-1.  **Context**: Attacker code running in the sandbox (requires `script-unsafe` or XSS).
-2.  **Exploit Code**:
+1.  **Exploit Code**:
     ```javascript
     navigator.serviceWorker.getRegistrations().then(regs => {
         regs.forEach(r => r.unregister());
     });
     ```
-3.  **Result**: The Service Worker is removed. Subsequent requests are not intercepted.
+2.  **Result**: The Service Worker is removed.
 
 ## Impact
 
-**Critical**. The sandbox infrastructure relies on the Service Worker for security monitoring and enforcement. Allowing the guest to dismantle the infrastructure invalidates the security model.
+**Medium**.
+*   **Virtual Files**: The primary function of the SW in the current architecture is serving "virtual files". Unregistering the SW breaks this functionality for the current session (DoS/Vandalism).
+*   **Observability**: The SW also logs network requests to the host. Unregistering it allows an attacker to perform network activity (permitted by CSP) without the host being aware (Logging Bypass).
+*   **Firewall**: If the architecture relies solely on CSP for blocking requests, removing the SW does not strictly "bypass" the firewall, but it removes the ability to implement more complex filtering logic in the future.
 
 ## Mitigation
 
-1.  **Remove `allow-same-origin`**: As with Research 01, removing `allow-same-origin` is the only way to prevent access to `navigator.serviceWorker`. The user code must run in an opaque origin.
-    *   *Implementation*: Adopt the "Middle Frame" architecture. The Middle Frame (Same Origin) manages the SW. The User Frame (Opaque) runs the code and has no access to `navigator.serviceWorker`.
-
-2.  **API Hardening (Partial)**: In the `outer-frame` (before loading `inner-frame`), one could try to delete `ServiceWorkerContainer.prototype.unregister`. However, since `inner-frame` is a fresh document, it gets a fresh set of prototypes.
-    *   *Note*: This mitigation is ineffective because the iframe gets a clean global scope.
+1.  **Architecture**: As noted in Research 01, preventing access to `navigator.serviceWorker` requires an opaque origin, which breaks virtual file serving.
+2.  **Acceptance**: If the SW is only for virtual files, SW deletion may be an acceptable risk (user breaking their own session). However, for robust logging/auditing, this remains a gap.
