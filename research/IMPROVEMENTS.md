@@ -22,7 +22,33 @@ Based on the comparison with other libraries (Zoid, Figma, Penpal) and the recen
 *   **CSP Enforcement**: Set `connect-src 'none'` (except for the Host API). This forces user code to use the provided `sandbox.fetch` bridge, ensuring all traffic is logged and controlled by the Host.
     *   *Trade-off*: This breaks standard libraries that expect global `fetch`. We would need to polyfill `window.fetch` to use our bridge.
 
-## 3. WebAssembly Isolation (Future / High Security)
+## 3. Communication Hardening: MessageChannel
+
+**Concept**: Use `MessageChannel` (`port1`, `port2`) for direct, private communication between Host and Sandbox, instead of `window.postMessage` (which broadcasts to `window` and requires strict origin checks).
+
+**Benefits**:
+*   **Security**: Reduces surface area. Other frames or browser extensions cannot snoop on the channel.
+*   **Performance**: Direct point-to-point communication.
+
+**Implementation Plan**:
+1.  **Host**: Create `const channel = new MessageChannel()`.
+2.  **Handshake**: Host sends `channel.port2` to the sandbox via `iframe.contentWindow.postMessage('init', '*', [channel.port2])`.
+3.  **Sandbox**: Listen for the initial handshake, store the port, and use `port.onmessage` for all subsequent traffic.
+4.  **Refactor**: Update `SafeSandbox.ts` and `inner-frame.ts` to use `port.postMessage()` instead of `window.parent.postMessage()`.
+
+## 4. Headless Sandbox & State Machines
+
+**Concept**: Decouple the "Sandboxed Environment" from the "DOM Rendering". Run user code in a purely headless context (e.g., a Web Worker or a hidden iframe) managed by a State Machine.
+
+**Architecture**:
+*   **State Machine (Host)**: Uses a library like XState to manage the lifecycle of the sandbox:
+    *   `Idle` -> `Initializing` -> `Running` -> `Paused` -> `Terminated`.
+    *   Handles timeouts, crashes, and resets deterministically.
+*   **Headless Execution**:
+    *   If DOM access is *not* required: Use `new Worker()`. This eliminates XSS, Clickjacking, and DOM tampering vectors entirely.
+    *   If DOM access *is* required: Use a hidden iframe, but strictly controlled by the state machine (e.g., recreating the iframe on every 'Reset' transition).
+
+## 5. WebAssembly Isolation (Future / High Security)
 
 **Problem**: Iframes share the main thread and rely on DOM security (Same-Origin Policy). Zero-day browser bugs can compromise this.
 **Lesson**: Figma uses QuickJS in WebAssembly.
@@ -30,13 +56,3 @@ Based on the comparison with other libraries (Zoid, Figma, Penpal) and the recen
 **Action Plan**:
 *   **Headless Mode**: Offer a configuration option to run the code in a `Worker` inside the iframe (or just a Worker).
 *   **WASM Container**: Explore integrating a JS engine compiled to WASM (like `quickjs-emscripten`). This provides "VM inside a VM" isolation, making breakout virtually impossible without a V8/WASM engine bug.
-
-## 4. Virtual Files & Host Service Worker
-
-**Clarification**: It is **not possible** for a Service Worker on the *Host* origin (`localhost`) to intercept requests for the *Sandbox* origin (`uuid.sandbox.localhost`) due to browser scoping rules.
-**Recommendation**: Continue using the Server-Side Virtual File serving mechanism implemented in the refactor. It is secure, simple, and stateless (if backed by a DB/Redis) or session-based (current memory map).
-
-## 5. UI/Transport Separation
-
-**Lesson**: Zoid separates the "Component" definition from the "Rendering".
-**Action Plan**: Refactor `SafeSandbox.ts` to separate the "Session Management" (API calls) from the "Iframe Management" (DOM). Create a `SandboxSession` class that can theoretically run headless.
