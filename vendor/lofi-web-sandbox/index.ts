@@ -1,28 +1,37 @@
 import { serve } from "bun";
 import { join } from "path";
 
-const ROOT = process.cwd();
+const ROOT = join(process.cwd(), 'vendor/lofi-web-sandbox');
 
 serve({
   port: 4444,
-  fetch(req) {
+  async fetch(req) {
     const url = new URL(req.url);
+
+    // Index
     if (url.pathname === '/') return new Response(Bun.file(join(ROOT, 'playground/security.html')));
 
-    // Serve src
+    // Source Files (TS Transpilation)
     if (url.pathname.startsWith('/src/')) {
-        return new Response(Bun.file(join(ROOT, url.pathname)));
+        const filePath = join(ROOT, url.pathname);
+        if (filePath.endsWith('.ts')) {
+            const build = await Bun.build({
+                entrypoints: [filePath],
+                target: "browser",
+            });
+            return new Response(build.outputs[0]);
+        }
+        return new Response(Bun.file(filePath));
     }
 
-    // Serve VFS SW (mock vfs.localhost on same port for simplicity in test,
-    // real impl needs separate domain)
-    if (url.pathname === '/vfs-sw.js') {
-        return new Response(Bun.file(join(ROOT, 'src/vfs-sw.js')), {
-            headers: { 'Content-Type': 'application/javascript', 'Service-Worker-Allowed': '/' }
+    // Mock VFS
+    if (url.pathname.startsWith('/vfs/')) {
+        return new Response('console.log("VFS Loaded"); window.parent.postMessage({type:"LOG", args:["VFS Loaded"]}, "*");', {
+            headers: { 'Content-Type': 'application/javascript', 'Access-Control-Allow-Origin': '*' }
         });
     }
 
-    return new Response("Not Found", { status: 404 });
+    return new Response("Not Found: " + url.pathname, { status: 404 });
   }
 });
 console.log("Lofi Server on 4444");

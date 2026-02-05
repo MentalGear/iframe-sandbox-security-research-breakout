@@ -6,9 +6,6 @@ test('Lofi Sandbox Basic Execution', async ({ page }) => {
   // Wait for custom element
   await page.waitForSelector('lofi-sandbox');
 
-  // Get element handle
-  const sandbox = await page.;
-
   // Set config (enable scripts)
   await page.evaluate(() => {
       const s = document.querySelector('lofi-sandbox');
