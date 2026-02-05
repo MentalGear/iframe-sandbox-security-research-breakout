@@ -8,10 +8,22 @@ serve({
   async fetch(req) {
     const url = new URL(req.url);
 
-    // Index
-    if (url.pathname === '/') return new Response(Bun.file(join(ROOT, 'playground/security.html')));
+    // Helper to serve with CORS
+    const serveFile = async (path) => {
+        const f = Bun.file(path);
+        if (await f.exists()) {
+            return new Response(f, {
+                headers: {
+                    'Content-Type': f.type,
+                    'Access-Control-Allow-Origin': '*' // Allow fetching from sandbox
+                }
+            });
+        }
+        return new Response("Not Found", { status: 404 });
+    }
 
-    // Source Files (TS Transpilation)
+    if (url.pathname === '/') return serveFile(join(ROOT, 'playground/security.html'));
+
     if (url.pathname.startsWith('/src/')) {
         const filePath = join(ROOT, url.pathname);
         if (filePath.endsWith('.ts')) {
@@ -19,14 +31,15 @@ serve({
                 entrypoints: [filePath],
                 target: "browser",
             });
-            return new Response(build.outputs[0]);
+            return new Response(build.outputs[0], {
+                headers: { 'Content-Type': 'application/javascript', 'Access-Control-Allow-Origin': '*' }
+            });
         }
-        return new Response(Bun.file(filePath));
+        return serveFile(filePath);
     }
 
-    // Mock VFS
     if (url.pathname.startsWith('/vfs/')) {
-        return new Response('console.log("VFS Loaded"); window.parent.postMessage({type:"LOG", args:["VFS Loaded"]}, "*");', {
+        return new Response('console.log("VFS Loaded");', {
             headers: { 'Content-Type': 'application/javascript', 'Access-Control-Allow-Origin': '*' }
         });
     }
