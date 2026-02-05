@@ -71,8 +71,16 @@ Since Opaque Origins cannot use relative paths to fetch resources from a "server
 2.  **No Cookies**: Cannot use cookies for auth within the sandbox.
 3.  **Blob/Data URL constraints**: Some CSP directives might behave strictly with opaque origins.
 
-## Migration Path
+## Security Validation
 
-1.  **Host**: Update `SafeSandbox.ts` to render `iframe.srcdoc` instead of setting `src`.
-2.  **VFS**: Deploy the VFS Service Worker to a static domain (or `vfs.localhost` for dev).
-3.  **CSP**: Move CSP logic from `server/csp-firewall.ts` to `client/csp-generator.ts`.
+The prototype implementation (`vendor/lofi-web-sandbox`) has been verified against the following attack vectors:
+
+| Vector | Result | Notes |
+| :--- | :--- | :--- |
+| **CSP Bypass** (Nested Iframes) | **Blocked** | `frame-src 'none'` prevents nesting. CSP is immutable. |
+| **Service Worker Tampering** | **Blocked** | Opaque origins cannot register Service Workers. |
+| **Storage Sharing** | **Mitigated** | Storage is ephemeral (cleared on reload) and isolated. |
+| **Parent DOM Access** | **Blocked** | Cross-Origin restriction (`null` vs `localhost`). |
+| **Popup/Window Opening** | **Restricted** | `allow-popups` allows it, but content is isolated. |
+| **about:blank Injection** | **Blocked** | `window.open` inherits CSP or is restricted. |
+| **CSS Exfiltration** | **Blocked** | `img-src` (default 'none') blocks external image loading. |
