@@ -1,53 +1,31 @@
 import { test, expect } from '@playwright/test';
 
-test('Monkey Patch Bypass (Logging Evasion)', async ({ page }) => {
-  await page.goto('http://localhost:3333/playground/security.html');
-  await page.waitForFunction(() => window.SandboxControl !== undefined);
-  await page.evaluate(() => window.SandboxControl.sandboxElement.setAttribute('script-unsafe', 'true'));
-  await page.waitForTimeout(2000);
+test('Monkey Patch Bypass - Mitigated', async ({ page }) => {
+  await page.goto('http://localhost:4444/');
+  await page.waitForSelector('lofi-sandbox');
+  await page.evaluate(() => {
+      const s = document.querySelector('lofi-sandbox');
+      s.setConfig({ scriptUnsafe: true });
+  });
 
-  // Exploit: Remove the monkey patch on window.fetch
-  // Since the user code runs in the same realm as the patch (inner-frame),
-  // they can simply delete or restore the original function if they can find it.
-  // The patch stored 'originalFetch' in a closure, so it's hard to retrieve the original.
-  // BUT, they can create a new iframe (same origin) and steal the clean fetch from there!
-  // Oh wait, frame-src is restricted?
-  // Server-side CSP: frame-src 'self' (which is uuid.sandbox.localhost).
-  // So they CAN create a same-origin iframe.
+  // Since we removed monkey patching (moved to VFS architecture), this test is less relevant for "Bypass",
+  // but we want to ensure "Silent Fetch" is blocked or handled.
+  // Actually, LofiSandbox doesn't use monkey patching for network logs anymore.
+  // It relies on VFS SW (for VFS) or nothing (for external).
+  // If we fetch external, it's blocked by CSP.
 
   const payload = `
-    (async () => {
-        // 1. Spawn clean iframe
-        const f = document.createElement('iframe');
-        f.src = 'inner-frame.html'; // Same origin
-        document.body.appendChild(f);
-        await new Promise(r => f.onload = r);
-
-        // 2. Steal clean fetch
-        const cleanFetch = f.contentWindow.fetch;
-
-        // 3. Use clean fetch to bypass logging
-        cleanFetch('http://example.com', { mode: 'no-cors' }).then(() => {
-            window.top.postMessage({ type: 'PWN_SUCCESS', message: 'Silent Fetch' }, '*');
-        });
-    })();
+    fetch('http://example.com')
+        .then(() => window.parent.postMessage({type:'LOG', args:['PWN_SUCCESS']}, '*'))
+        .catch(() => window.parent.postMessage({type:'LOG', args:['PWN_FAILURE']}, '*'));
   `;
 
   await page.evaluate((code) => {
-    window.SandboxControl.execute(code);
-  }, payload);
-
-  // Verify success message
-  const result = await page.evaluate(() => {
-      return new Promise(resolve => {
-          window.addEventListener('message', m => {
-              if (m.data.type === 'PWN_SUCCESS') resolve(m.data);
-          });
-      });
+    const s = document.querySelector('lofi-sandbox');
+    s.execute(code);
   });
 
-  // Verify NO logs
-  const logs = await page.evaluate(() => window.SandboxControl.getLogs());
-  const fetchLogs = logs.filter(l => l.message.includes('example.com'));
-  expect(fetchLogs.length).toBe(0);
+  // Expect FAILURE (Blocked by CSP)
+  const msg = await page.waitForEvent('console', m => m.text().includes('PWN_FAILURE'));
+  expect(msg).toBeTruthy();
 });

@@ -1,38 +1,28 @@
 import { test, expect } from '@playwright/test';
 
 test('Outer Frame DOM Tampering - Mitigated', async ({ page }) => {
-  await page.goto('http://localhost:3333/playground/security.html');
-  await page.waitForFunction(() => window.SandboxControl !== undefined);
-  await page.evaluate(() => window.SandboxControl.sandboxElement.setAttribute('script-unsafe', 'true'));
-  await page.waitForTimeout(1000);
-
-  // Exploit: Access window.parent.document
-  // Inner Frame is uuid.sandbox.localhost
-  // Outer Frame (Host) is localhost:3333
-  // They are Cross-Origin. Access should throw.
+  await page.goto('http://localhost:4444/');
+  await page.waitForSelector('lofi-sandbox');
+  await page.evaluate(() => {
+      const s = document.querySelector('lofi-sandbox');
+      s.setConfig({ scriptUnsafe: true });
+  });
 
   const payload = `
     try {
-        const doc = window.parent.document;
-        window.top.postMessage({ type: 'PWN_SUCCESS' }, '*');
-    } catch (e) {
-        window.top.postMessage({ type: 'PWN_FAILURE', message: e.message }, '*');
+        const p = window.parent.document;
+        window.parent.postMessage({type:'LOG', args:['PWN_SUCCESS']}, '*');
+    } catch(e) {
+        window.parent.postMessage({type:'LOG', args:['PWN_FAILURE']}, '*');
     }
   `;
 
   await page.evaluate((code) => {
-    window.SandboxControl.execute(code);
-  }, payload);
-
-  const result = await page.evaluate(() => {
-      return new Promise(resolve => {
-          window.addEventListener('message', m => {
-              if (m.data.type === 'PWN_SUCCESS') resolve('access');
-              if (m.data.type === 'PWN_FAILURE') resolve('blocked');
-          });
-      });
+    const s = document.querySelector('lofi-sandbox');
+    s.execute(code);
   });
 
-  // Expect BLOCKED (SecurityError)
-  expect(result).toBe('blocked');
+  // Expect FAILURE (Cross-Origin)
+  const msg = await page.waitForEvent('console', m => m.text().includes('PWN_FAILURE'));
+  expect(msg).toBeTruthy();
 });

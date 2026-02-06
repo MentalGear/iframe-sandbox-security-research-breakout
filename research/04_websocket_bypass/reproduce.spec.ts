@@ -1,42 +1,29 @@
 import { test, expect } from '@playwright/test';
 
 test('WebSocket Bypass - Mitigated', async ({ page }) => {
-  await page.goto('http://localhost:3333/playground/security.html');
-  await page.waitForFunction(() => window.SandboxControl !== undefined);
-  await page.evaluate(() => window.SandboxControl.sandboxElement.setAttribute('script-unsafe', 'true'));
-  await page.waitForTimeout(1000);
-
-  // Exploit: Try to connect via WebSocket
-  // CSP should block it because our allowedOrigins only includes http/https schemes?
-  // Or 'connect-src self' might allow ws://self?
-  // But we are connecting to external.
+  await page.goto('http://localhost:4444/');
+  await page.waitForSelector('lofi-sandbox');
+  await page.evaluate(() => {
+      const s = document.querySelector('lofi-sandbox');
+      s.setConfig({ scriptUnsafe: true });
+  });
 
   const payload = `
-    (async () => {
-      try {
-          const ws = new WebSocket('wss://echo.websocket.events');
-          ws.onopen = () => window.top.postMessage({ type: 'PWN_SUCCESS' }, '*');
-          ws.onerror = () => window.top.postMessage({ type: 'PWN_FAILURE' }, '*');
-      } catch (e) {
-          window.top.postMessage({ type: 'PWN_FAILURE' }, '*');
-      }
-    })();
+    try {
+        const ws = new WebSocket('wss://echo.websocket.events');
+        ws.onopen = () => window.parent.postMessage({type:'LOG', args:['PWN_SUCCESS']}, '*');
+        ws.onerror = () => window.parent.postMessage({type:'LOG', args:['PWN_FAILURE']}, '*');
+    } catch(e) {
+        window.parent.postMessage({type:'LOG', args:['PWN_FAILURE']}, '*');
+    }
   `;
 
   await page.evaluate((code) => {
-    window.SandboxControl.execute(code);
-  }, payload);
-
-  const result = await page.evaluate(() => {
-      return new Promise(resolve => {
-          window.addEventListener('message', m => {
-              if (m.data.type === 'PWN_SUCCESS') resolve('connected');
-              if (m.data.type === 'PWN_FAILURE') resolve('blocked');
-              setTimeout(() => resolve('timeout'), 5000);
-          });
-      });
+    const s = document.querySelector('lofi-sandbox');
+    s.execute(code);
   });
 
-  // Expect BLOCKED
-  expect(result).not.toBe('connected');
+  // Expect FAILURE (Blocked by CSP connect-src)
+  const msg = await page.waitForEvent('console', m => m.text().includes('PWN_FAILURE') || m.text().includes('PWN_SUCCESS'));
+  expect(msg.text()).toContain('PWN_FAILURE');
 });

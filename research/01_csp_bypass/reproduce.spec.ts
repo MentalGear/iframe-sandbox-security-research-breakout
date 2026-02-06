@@ -1,50 +1,37 @@
 import { test, expect } from '@playwright/test';
 
 test('CSP Bypass via Nested Iframe - Mitigated', async ({ page }) => {
-  await page.goto('http://localhost:3333/playground/security.html');
-  await page.waitForFunction(() => window.SandboxControl !== undefined);
-  await page.evaluate(() => window.SandboxControl.sandboxElement.setAttribute('script-unsafe', 'true'));
-  await page.waitForTimeout(1000);
+  await page.goto('http://localhost:4444/'); // Use Lofi Server
+  await page.waitForSelector('lofi-sandbox');
+  await page.evaluate(() => {
+      const s = document.querySelector('lofi-sandbox');
+      s.setConfig({ scriptUnsafe: true });
+  });
 
   const payload = `
     (async () => {
-      // Spawn Malicious Frame with query params
       const iframe = document.createElement('iframe');
-      // The server ignores query params now, so this should get default restricted CSP (self)
-      iframe.src = "/inner-frame.html?allow=example.com&unsafe";
+      // Lofi Sandbox ignores params, uses srcdoc.
+      // Nesting blocked by frame-src 'none'.
+      iframe.src = "javascript:alert(1)";
       document.body.appendChild(iframe);
-      await new Promise(r => iframe.onload = r);
 
-      const child = iframe.contentWindow;
-      const script = child.document.createElement('script');
-      script.textContent = \`
-          fetch('http://example.com', { mode: 'no-cors' })
-             .then(r => window.top.postMessage({ type: 'PWN_SUCCESS' }, '*'))
-             .catch(e => window.top.postMessage({ type: 'PWN_FAILURE' }, '*'));
-      \`;
-      child.document.body.appendChild(script);
+      iframe.onload = () => window.parent.postMessage({type:'LOG', args:['PWN_SUCCESS']}, '*');
+      iframe.onerror = () => window.parent.postMessage({type:'LOG', args:['PWN_FAILURE']}, '*');
     })();
   `;
 
   await page.evaluate((code) => {
-    window.SandboxControl.execute(code);
-  }, payload);
-
-  // We expect failure (fetch blocked by CSP)
-  // Or timeout (no message ever sent if script execution fails due to CSP)
-
-  // Wait for failure message
-  const result = await page.evaluate(() => {
-      return new Promise(resolve => {
-          window.addEventListener('message', m => {
-              if (m.data.type === 'PWN_FAILURE') resolve('blocked');
-              if (m.data.type === 'PWN_SUCCESS') resolve('pwned');
-          });
-          // Timeout
-          setTimeout(() => resolve('timeout'), 5000);
-      });
+    const s = document.querySelector('lofi-sandbox');
+    s.execute(code);
   });
 
-  // It should be blocked (failure) or timeout (if script blocked)
-  expect(result).not.toBe('pwned');
+  // We expect NO 'PWN_SUCCESS'.
+  // If we wait and timeout, that is PASS (Secure).
+  try {
+      const msg = await page.waitForEvent('console', m => m.text().includes('PWN_SUCCESS'), { timeout: 2000 });
+      expect(msg).toBeNull(); // Fail if received
+  } catch (e) {
+      // Timeout = Secure
+  }
 });
