@@ -3,6 +3,7 @@ export interface SandboxConfig {
     scriptUnsafe?: boolean; // 'unsafe-eval'
     virtualFilesUrl?: string; // URL to the Virtual Files Hub
     mode?: 'iframe' | 'worker'; // Execution mode
+    executionTimeout?: number; // Max execution time in ms (Worker mode only)
 }
 
 export class LofiSandbox extends HTMLElement {
@@ -12,6 +13,7 @@ export class LofiSandbox extends HTMLElement {
     private _sessionId: string;
     private _port: MessagePort | null = null;
     private _hubFrame: HTMLIFrameElement | null = null;
+    private _timeoutId: any = null;
 
     constructor() {
         super();
@@ -26,7 +28,6 @@ export class LofiSandbox extends HTMLElement {
     setConfig(config: SandboxConfig) {
         this._config = { ...this._config, ...config };
 
-        // Initialize Hub if URL provided
         if (this._config.virtualFilesUrl && !this._hubFrame) {
             this._hubFrame = document.createElement('iframe');
             this._hubFrame.style.display = 'none';
@@ -51,9 +52,29 @@ export class LofiSandbox extends HTMLElement {
 
     execute(code: string) {
         if (this._port) {
+            this._startTimeout();
             this._port.postMessage({ type: 'EXECUTE', code });
         } else {
             console.warn("Sandbox not ready (no port)");
+        }
+    }
+
+    private _startTimeout() {
+        if (this._timeoutId) clearTimeout(this._timeoutId);
+
+        if (this._config.mode === 'worker' && this._config.executionTimeout && this._config.executionTimeout > 0) {
+            this._timeoutId = setTimeout(() => {
+                console.warn("[Sandbox] Execution Timeout - Terminating Worker");
+                window.dispatchEvent(new CustomEvent('sandbox-log', { detail: { type: 'LOG', level: 'error', args: ['Execution Timeout'] } }));
+
+                // Terminate and Restart
+                if (this._worker) {
+                    this._worker.terminate();
+                    this._worker = null;
+                    if (this._port) { this._port.close(); this._port = null; }
+                    this.renderWorker(); // Restart
+                }
+            }, this._config.executionTimeout);
         }
     }
 
@@ -61,6 +82,18 @@ export class LofiSandbox extends HTMLElement {
         const channel = new MessageChannel();
         this._port = channel.port1;
         this._port.onmessage = (e) => {
+            // Activity received, clear timeout?
+            // Or only clear on specific 'DONE' message?
+            // For now, any message resets the watchdog? No, that allows keepalive abuse.
+            // Better: User code explicitly signals done?
+            // Or simply: Timeout is "Max duration for this execute() call".
+            // Since execute() is fire-and-forget here, we can't know when it ends.
+            // But we can restart the timer on messages to allow "streaming" logs.
+            if (this._config.mode === 'worker' && this._config.executionTimeout) {
+                // Optional: Sliding window timeout on activity
+                // this._startTimeout();
+            }
+
             if (e.data.type === 'LOG') {
                 window.dispatchEvent(new CustomEvent('sandbox-log', { detail: e.data }));
             }
@@ -77,6 +110,7 @@ export class LofiSandbox extends HTMLElement {
         if (this._iframe) { this._iframe.remove(); this._iframe = null; }
         if (this._worker) { this._worker.terminate(); this._worker = null; }
         if (this._port) { this._port.close(); this._port = null; }
+        if (this._timeoutId) clearTimeout(this._timeoutId);
 
         if (this._config.mode === 'worker') {
             this.renderWorker();
