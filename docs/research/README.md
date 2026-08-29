@@ -12,9 +12,9 @@ For the purposes of this research, a "Breakout" or "Vulnerability" is defined as
 
 ## Backlog
 
-[BACKLOG_EXISTING_SOLUTIONS.md](BACKLOG_EXISTING_SOLUTIONS.md) turns the prior-art
-comparisons into a prioritised list of open work, and records what was deliberately
-rejected.
+Open work from this research — and from the rest of the project — is tracked in the
+[backlog](../BACKLOG.md). Note that the reproduction suites below **do not currently run**;
+see backlog item T1.
 
 ## Findings
 

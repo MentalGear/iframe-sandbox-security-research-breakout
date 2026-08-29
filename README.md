@@ -49,6 +49,11 @@ Navigate to [http://localhost:4444/](http://localhost:4444/).
 *   **`server.ts`**: The Bun web server that serves static files and transpiles TypeScript.
 *   **`docs/research`**: Playwright test suites for security regression testing.
 
+## Backlog
+
+Open work — broken scaffolding, security follow-ups, planned capabilities — is tracked in
+[`docs/BACKLOG.md`](docs/BACKLOG.md).
+
 ## Security Mitigations
 
 The sandbox implements several layers of defense:

@@ -1,8 +1,8 @@
 # Roadmap & Improvements
 
 > **Status**: this roadmap predates the current code. For the prioritised, code-grounded
-> version — including which items here are already shipped — see
-> [`BACKLOG_EXISTING_SOLUTIONS.md`](BACKLOG_EXISTING_SOLUTIONS.md).
+> version — including which items here are already shipped — see the
+> project [backlog](../BACKLOG.md).
 
 Based on the comparison with other libraries (Zoid, Figma, Penpal) and the recent architectural refactor, here are practical steps to further improve `iframe-sandbox`.
 
