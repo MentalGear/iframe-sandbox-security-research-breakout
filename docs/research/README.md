@@ -23,3 +23,4 @@ The `research/` directory contains subdirectories for each investigated attack v
 - [01_csp_bypass](01_csp_bypass/README.md): Bypassing network firewall by spawning nested iframes with manipulated CSP.
 - [02_sw_tampering](02_sw_tampering/README.md): Disabling the network firewall by unregistering the Service Worker.
 - [03_storage_sharing](03_storage_sharing/README.md): Leaking data between sandbox instances via shared LocalStorage.
+- [11_meta_csp_delivery](11_meta_csp_delivery/README.md): Limits and failure modes of delivering CSP via `<meta>` — including user markup deleting the injected policy outright.

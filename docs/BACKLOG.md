@@ -7,6 +7,10 @@ Every "current state" line below was verified against the code on 2026-08-29 —
 line numbers checked. Where a document or a README claims something the code does not do, the
 gap is filed as an item rather than quietly edited away.
 
+Whether this project should continue at all — rather than adopting an existing solution — is
+answered separately in [ADR-001](ADR-001-continue-or-adopt.md). This backlog assumes its
+conditional "continue".
+
 **Priority**: P0 blocks everything else · P1 next · P2 planned · P3 opportunistic.
 **Effort**: S ≈ hours · M ≈ days · L ≈ week+.
 
@@ -25,6 +29,7 @@ gap is filed as an item rather than quietly edited away.
 | `bun test` / `bun run build` | ❌ both fail on paths that no longer exist (T3) |
 | Type check | 🟡 91 errors, all in `playground/` and `sw.ts`; `src/host.ts` is clean (H3) |
 | CI | ❌ none — no `.github/` |
+| CSP delivery | 🟡 `<meta>` only — deletable by user markup, 3 directives discarded (S2, S7, S8) |
 | Installable package | ❌ `private: true`, `main` points at a missing file (D1) |
 
 The core is in better shape than the scaffolding around it. **Nothing that verifies the security
@@ -125,7 +130,9 @@ origin and injected CSP; route the `MessagePort` handshake through the frame.
 **Acceptance**: worker-mode `fetch` to a domain absent from `connectionsAllowed` is blocked, and
 `importScripts` of an external URL fails — asserted in a *running* spec.
 
-### S2 · CSP injection into user HTML is regex-based and untested — **P1 · M**
+### S2 · User markup can delete the injected CSP — **P0 · M**
+
+*Raised from P1 after [Research 11.3](research/11_meta_csp_delivery/README.md) reproduced it.*
 
 **Verified**: `createIframe()` inserts the `<meta>` CSP by string-replacing `<head>` or the
 `<html…>` tag (`src/host.ts:267–271`), guarded only by `unsafeContent.toLowerCase().includes('<html')`.
@@ -133,16 +140,26 @@ Two of the repo's own TODOs sit on those lines (`src/host.ts:261`, `:265`):
 
 > `// TODO: is this secure enough for user provided content? Could user-content contain some trick to avoid having this inserted?`
 
-Concrete concerns: content containing `<html` inside a comment, a string or an attribute takes the
-wrong branch; a document with an uppercase or attribute-bearing `<HEAD lang=…>` misses the `<head>`
-branch and gets a second `<head>` injected; content preceded by a `<!doctype>` plus leading markup
-can shift the meta tag after a script.
+**Reproduced**: `String.replace` with a non-global regex replaces the *first* textual match
+anywhere in the string, with no notion of document structure. The payload
+`<html><body><!-- <head> -->…` captures the injection inside an HTML comment, and the sandbox
+reports `document.querySelector('meta[http-equiv="Content-Security-Policy"]') === null` — the
+document runs with **no CSP at all**. The security block, `<base>` tag and comms script all
+vanish with it.
+
+Isolation held in that test, but via the opaque origin (the fetch failed on CORS, not CSP). With
+the policy gone, `connect-src` allowlisting is gone: `no-cors` beacons, `sendBeacon`, form posts
+and `<a ping>` remain reachable, and the request URL is the exfiltration channel.
+
+Related: a policy that lands outside the *parsed* `<head>` is dropped entirely, not partially
+(Research 11.2) — so being textually first is not sufficient.
 
 **Work**: replace regex splicing with a parse-then-serialize step, or prepend the security block
 before any user content and assert the parsed result. Fuzz it against hostile inputs.
 
-**Acceptance**: a spec asserting `document.querySelector('meta[http-equiv]')` is the first head
-child across a corpus of malformed documents, including the failing cases above.
+**Acceptance**: `docs/research/11_meta_csp_delivery/reproduce.spec.ts` §11.3 passes (it is written
+to fail against today's code), and the meta is asserted to be the first *parsed* head child across
+a corpus of malformed and hostile documents.
 
 ### S3 · The session id is readable by sandboxed code — **P1 · S**
 
@@ -190,6 +207,38 @@ and nothing caps allocation in either mode. See [`RESOURCE_QUOTAS.md`](research/
 crashing the tab.
 
 ---
+
+### S7 · Silently ignored CSP directives — **P1 · S**
+
+*From [Research 11.1](research/11_meta_csp_delivery/README.md).*
+
+**Verified**: a `<meta>`-delivered policy discards `frame-ancestors`, `report-uri`/`report-to` and
+`sandbox` — Chromium logs *"is ignored when delivered via a `<meta>` element"* for each.
+`CSPDirectives` exposes `frame-ancestors` (`src/csp-directives.ts`) and `generateCSP()` emits it
+whenever a consumer supplies a non-empty array. Nothing warns them, so a consumer who sets it
+believes they restricted embedding and has configured nothing. The shipped default passes `[]`,
+which is dropped as empty, so only the public config surface is affected.
+
+**Work**: reject or warn on these four directives in `generateCSP()` under meta delivery; move
+embedding control to the host element. Note this also rules out `report-uri`/`report-to`, leaving
+the in-sandbox `securitypolicyviolation` event (S5) as the only reporting route.
+
+**Acceptance**: setting `frame-ancestors` raises a warning (or throws) rather than emitting a
+directive the browser discards.
+
+### S8 · Pre-policy egress window — **P3 · accepted risk**
+
+*From [Research 11.4](research/11_meta_csp_delivery/README.md).*
+
+**Verified**: in 1 of 5 runs a request reached the network from the transient `about:blank`
+document, before the meta policy took effect. It is racy and **branch-independent** — it appeared
+on the well-formed document, which takes the safest injection path. The CSP violation was still
+logged, so the resource was blocked from *use*; the request itself still left, which is sufficient
+for exfiltration where the URL is the payload.
+
+**No mitigation exists under `<meta>` delivery** — the window is inherent to the mechanism. It
+closes only under header delivery, where the policy arrives with the response carrying the content.
+Tracked as a known limitation; see [ADR-001](ADR-001-continue-or-adopt.md).
 
 ## B · API Surface & DX
 
@@ -414,9 +463,11 @@ Where the items above come from. Legend: ✅ shipped · 🟡 partial · ❌ miss
 The two columns where we lead — isolation without server config, and the private channel — are the
 ones the backlog must not regress.
 
-Larger bets that follow from the same comparison, both **P3**: an **opt-in hosted unique-origin
-mode** (`<uuid>.sandbox.tld`, as `cross-origin-html-embed` and CodeSandbox do) for consumers who
-need real storage and Service Workers *inside* the sandbox, keeping local-first as the default; and
+Larger bets that follow from the same comparison, both **P3**: an **opt-in host-served mode** that
+delivers CSP as an HTTP **header** while keeping the opaque origin via the `sandbox` attribute —
+which closes S7, S8 and most of S2 at once, and needs no wildcard DNS (see
+[ADR-001](ADR-001-continue-or-adopt.md); note this is *not* the unique-origin model, which is a
+downgrade on the origin axis); and
 a **timeboxed spike on `quickjs-emscripten`** for a no-DOM, VM-grade tier in the manner of Figma's
 plugin sandbox — output a recommendation, not code.
 
@@ -452,8 +503,8 @@ So `IMPROVEMENTS.md` is not re-proposed wholesale:
 | Milestone | Items | Why in this order |
 | :--- | :--- | :--- |
 | **M1 · Turn the lights on** | T1, T2, T3, D2 | Until the suite runs, no security claim is verified and no later change is safe. CI belongs here so the same drift cannot recur. |
-| **M2 · Make the claims true** | S1, D1, B3, B4 | A documented capability that does not hold (S1) or does not install (D1) costs more than a missing one. B3/B4 ride along — DevTools is silent and the element self-registers nowhere. |
-| **M3 · Harden** | S2, S3, S4, T4, H3 | The injection path and the session-id model are the two places where the design's assumptions are unverified; presets and type checking keep them that way. |
+| **M2 · Make the claims true** | S1, S2, S7, D1, B3, B4 | A documented capability that does not hold (S1) or does not install (D1) costs more than a missing one. B3/B4 ride along — DevTools is silent and the element self-registers nowhere. |
+| **M3 · Harden** | S3, S4, T4, H3 | The injection path and the session-id model are the two places where the design's assumptions are unverified; presets and type checking keep them that way. |
 | **M4 · Make it adoptable** | B1, B2, C1, C2 | RPC + lifecycle is the parity bar set by websandbox and Penpal; the VFS is the differentiator, so it must actually work. |
 | **M5 · Extend** | B5, B6, C3, C4, S5, S6, D3, H1, H2, H4, H5 | Observability, quotas, docs and hygiene once the base is trustworthy. |
 | **Bets** | hosted-origin mode, QuickJS spike | Independent; run when there is slack. |

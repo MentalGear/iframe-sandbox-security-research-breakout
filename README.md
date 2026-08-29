@@ -52,7 +52,8 @@ Navigate to [http://localhost:4444/](http://localhost:4444/).
 ## Backlog
 
 Open work — broken scaffolding, security follow-ups, planned capabilities — is tracked in
-[`docs/BACKLOG.md`](docs/BACKLOG.md).
+[`docs/BACKLOG.md`](docs/BACKLOG.md). Whether to continue this project rather than adopt an
+existing solution is argued in [`docs/ADR-001-continue-or-adopt.md`](docs/ADR-001-continue-or-adopt.md).
 
 ## Security Mitigations
 
