@@ -10,6 +10,12 @@ For the purposes of this research, a "Breakout" or "Vulnerability" is defined as
 2.  **Access Host Context**: Gaining access to the `window.parent` or `window.top` DOM or JavaScript objects in a way that violates the intended Same-Origin Policy isolation.
 3.  **Compromise Infrastructure**: Tampering with the sandbox control mechanisms (e.g., Service Workers, Shared Storage) to degrade security for the current or future sessions.
 
+## Backlog
+
+[BACKLOG_EXISTING_SOLUTIONS.md](BACKLOG_EXISTING_SOLUTIONS.md) turns the prior-art
+comparisons into a prioritised list of open work, and records what was deliberately
+rejected.
+
 ## Findings
 
 The `research/` directory contains subdirectories for each investigated attack vector.
