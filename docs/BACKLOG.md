@@ -30,6 +30,7 @@ conditional "continue".
 | Type check | 🟡 91 errors, all in `playground/` and `sw.ts`; `src/host.ts` is clean (H3) |
 | CI | ❌ none — no `.github/` |
 | CSP delivery | 🟡 `<meta>` only — deletable by user markup, 3 directives discarded (S2, S7, S8) |
+| Default policy | ❌ `base-uri` and `form-action` unrestricted — form exfiltration verified (S9) |
 | Installable package | ❌ `private: true`, `main` points at a missing file (D1) |
 
 The core is in better shape than the scaffolding around it. **Nothing that verifies the security
@@ -240,6 +241,38 @@ for exfiltration where the URL is the payload.
 closes only under header delivery, where the policy arrives with the response carrying the content.
 Tracked as a known limitation; see [ADR-001](ADR-001-continue-or-adopt.md).
 
+### S9 · `base-uri` and `form-action` are silently unrestricted — **P0 · S**
+
+*From [Research 12](research/12_non_fallback_directives/README.md).*
+
+**Verified**: `generateCSP()` omits empty-array directives, documented as *"Empty arrays are
+omitted to allow `default-src` fallback"* (`src/lib/csp/csp-generator.ts:3-5`). That reasoning
+holds for fetch directives but **not** for `base-uri` or `form-action`, which have no fallback.
+The shipped default sets both to `[]`, so the emitted policy is:
+
+```
+default-src 'none'; upgrade-insecure-requests; script-src 'self' 'unsafe-inline';
+style-src 'unsafe-inline'; worker-src blob: data:;
+```
+
+— with no `base-uri` and no `form-action`, i.e. **both unrestricted**.
+
+**Exploited**: with `capabilities: ['allow-scripts', 'allow-forms']` (both sanctioned values in
+`ALLOWED_CAPABILITIES`) and the default `connectionsAllowed`, a `GET` form submitted to a
+non-allowlisted target reached the network as `…?stolen=session-secret`, **with no CSP violation
+logged**. A form is a complete exfiltration primitive: no `fetch`, no `connect-src`, no bridge.
+
+`base-uri` is the mitigation [finding 10](research/10_base_tag_hijacking/README.md) recommended
+for itself and never got — and it matters more than that finding knew, since the VFS routes assets
+through an injected `<base href>` (`src/host.ts:257`).
+
+**Work**: teach `generateCSP()` which directives fall back and which do not; emit `'none'` for an
+empty non-fallback directive instead of omitting it. Default `base-uri` to `'self'` and
+`form-action` to `'none'`. Document that `[]` means *deny* in this config surface.
+
+**Acceptance**: `docs/research/12_non_fallback_directives/reproduce.spec.ts` passes (both cases are
+written to fail against today's code).
+
 ## B · API Surface & DX
 
 ### B1 · Promise-based RPC in both directions — **P1 · M**
@@ -433,11 +466,11 @@ from `include`, and `baseUrl` is deprecated for TS 7.
 import, include `test/`, replace `baseUrl` with relative paths. **Acceptance**: `tsc --noEmit` is
 clean and runs in CI.
 
-### H4 · Research index is 30% complete — **P3 · S**
+### H4 · Research index — ✅ **done**
 
-`docs/research/README.md` links 3 of the 10 finding directories. **Work**: list all ten with a
-one-line status (mitigated / open / not applicable to the current architecture) — several findings
-predate the `srcdoc` refactor and no longer describe the shipped design.
+`docs/research/README.md` now indexes all twelve findings with a per-finding status against the
+current opaque-origin architecture, distinguishing "closed by construction" from "open". A
+`docs/README.md` index was added alongside it.
 
 ### H5 · Missing repo basics — **P3 · S**
 
@@ -516,8 +549,8 @@ So `IMPROVEMENTS.md` is not re-proposed wholesale:
 | Milestone | Items | Why in this order |
 | :--- | :--- | :--- |
 | **M1 · Turn the lights on** | T1, T2, T3, D2 | Until the suite runs, no security claim is verified and no later change is safe. CI belongs here so the same drift cannot recur. |
-| **M2 · Make the claims true** | S1, S2, S7, D1, B3, B4 | A documented capability that does not hold (S1) or does not install (D1) costs more than a missing one. B3/B4 ride along — DevTools is silent and the element self-registers nowhere. |
+| **M2 · Make the claims true** | S1, S2, S7, S9, D1, B3, B4 | A documented capability that does not hold (S1) or does not install (D1) costs more than a missing one. B3/B4 ride along — DevTools is silent and the element self-registers nowhere. |
 | **M3 · Harden** | S3, S4, T4, H3 | The injection path and the session-id model are the two places where the design's assumptions are unverified; presets and type checking keep them that way. |
 | **M4 · Make it adoptable** | B1, B2, C1, C2 | RPC + lifecycle is the parity bar set by websandbox and Penpal; the VFS is the differentiator, so it must actually work. |
-| **M5 · Extend** | B5, B6, C3, C4, S5, S6, D3, H1, H2, H4, H5 | Observability, quotas, docs and hygiene once the base is trustworthy. |
+| **M5 · Extend** | B5, B6, C3, C4, S5, S6, D3, H1, H2, H5 | Observability, quotas, docs and hygiene once the base is trustworthy. |
 | **Bets** | hosted-origin mode, QuickJS spike | Independent; run when there is slack. |
