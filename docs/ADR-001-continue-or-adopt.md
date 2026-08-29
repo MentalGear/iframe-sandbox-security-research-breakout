@@ -81,6 +81,78 @@ This reframes backlog item A3. Its value is **not** unique origins — those are
 value is header-delivered CSP, and it should be scoped accordingly: a second delivery mode, not a
 second origin model.
 
+## Field scan — August 2026
+
+The comparisons in this repo predate the 2025-26 wave of "run AI-generated code safely in the
+browser" tooling. The entrants below were checked against primary sources on 2026-08-29; two
+claims from the brief that prompted this scan did not survive verification.
+
+| Project | Date | Licence | Traction | Mechanism | Renders untrusted DOM? |
+| :--- | :--- | :--- | :--- | :--- | :---: |
+| [`@tanstack/ai-isolate-quickjs`](https://tanstack.com/ai/latest/docs/code-mode/code-mode-isolates) | 2026-04 | MIT | TanStack | QuickJS→WASM isolate driver | **No** |
+| [`vercel-labs/quickjs-wasi`](https://github.com/vercel-labs/quickjs-wasi) | 2026-03 | MIT | 113★ | QuickJS-NG→WASM, VM snapshot/restore incl. pending promises | **No** |
+| [`reearth/zushi`](https://github.com/reearth/zushi) | 2026-05 | MIT | 3★ | QuickJS WASM for logic **+ sandboxed opaque-origin iframe for UI** | Yes |
+| [`lifo-sh/lifo`](https://github.com/lifo-sh/lifo) | 2026-02 | MIT | 529★ | "browser-native OS"; POSIX VFS on **IndexedDB** | Not documented |
+| [BrowserPod](https://browserpod.io/docs/more/licensing) (CheerpX) | 2026 | **Proprietary** | Leaning Tech | WASM runtimes; Linux tier via CheerpX slated end-2026 | Yes |
+| `webpack-wasm-sandbox-plugin` | — | — | — | **Could not verify this package exists** | — |
+
+### What the scan changes
+
+**1. The field moved to logic-only isolation — which is a different tier, not a substitute.**
+TanStack's own driver table states plainly that **no** driver provides DOM or UI rendering; they
+execute TypeScript and bridge tool calls back to the host. `quickjs-wasi` is likewise a bare JS
+engine. This repo's use case — rendering untrusted HTML and CSS — is not addressed by any of them.
+They are candidates for the *logic tier* (backlog A4), not replacements for the iframe tier.
+
+**2. `zushi` independently converged on this repo's target architecture.** A QuickJS WASM VM for
+logic plus a sandboxed, opaque-origin iframe for UI, with postMessage as the only channel and
+*"only data crosses these boundaries; code and live references do not."* That is meaningful
+external validation of the two-layer split. But at 3 stars it is a **reference architecture, not a
+dependency**, and its documentation covers neither CSP delivery nor virtual files — the two
+hardest problems this repo has actually documented ([Research 11](research/11_meta_csp_delivery/README.md),
+`RESEARCH_VFS_ACCESS.md`).
+
+**3. `lifo` is the only real overlap with our differentiator — and it takes the opposite trade.**
+It ships the browser VFS this repo is still building (C1–C3), with IndexedDB persistence. But
+IndexedDB is unavailable to an opaque origin, so Lifo necessarily runs on a **real origin**: it
+buys persistence by giving up opacity, and inherits every row of the opaque-vs-unique table above.
+Its own framing is *"browser-level isolation, not VM-level"*, and no threat model or security
+documentation was found. It competes on **features**, not on **threat model** — which is precisely
+the distinction this project exists to make.
+
+**4. BrowserPod is proprietary**, free only for personal and open-source use, with an Enterprise
+licence for self-hosting and commercial use. That disqualifies it as a dependency here, and is
+worth noting while this repo still has no licence of its own (backlog H5).
+
+### Effect on this decision
+
+The flip condition stated below — *a credible new entrant doing opaque-origin isolation with
+header-delivered CSP* — is **not met**. Nothing found renders untrusted DOM in an opaque origin
+with a header-delivered policy. The niche identified in the original comparisons still exists.
+
+What *has* changed is that the logic tier is now a solved, MIT-licensed commodity. Backlog **A4**
+(the QuickJS spike) should be upgraded from a speculative P3 bet to a concrete integration
+evaluation, with `quickjs-wasi` and `@tanstack/ai-isolate-quickjs` as the candidates and `zushi`
+as the reference for how the two layers meet.
+
+## Hybrid strategy: adopt the commodity, keep the differentiator
+
+The build-vs-adopt framing is a false binary. The defensible position is to buy the parts that
+have become commodities and keep the parts nobody else is solving.
+
+| Layer | Position | Rationale |
+| :--- | :--- | :--- |
+| **Transport / RPC** (backlog B1) | **Adopt Penpal**, or copy its shape | Promise-based `postMessage` correlation is solved, small and well-typed. Hand-rolling message envelopes is undifferentiated work, and `websandbox`, Penpal and Zoid all set the same bar. Our `MessageChannel` layer already exists — Penpal supplies the framing on top. Confirm licence compatibility first. |
+| **Logic tier** (backlog A4) | **Adopt `quickjs-wasi` or the TanStack driver** | MIT, browser-capable, actively maintained by established teams. `quickjs-wasi`'s VM snapshot/restore also answers backlog B2's `reset()` far better than recreating a frame. Do not write a JS engine. |
+| **UI / DOM tier** | **Keep — this is the project** | No entrant renders untrusted DOM in an opaque origin. This is the differentiator. |
+| **CSP policy layer** | **Keep, and fix** | Research 11 shows the current delivery is breachable (S2) and lossy (S7). Nobody else solves it for the local-first case. |
+| **Virtual files** | **Keep — but watch `lifo`** | Our VFS is opaque-origin-compatible; theirs is not. If they solve it under opacity, reassess. |
+| **Full OS / Linux tier** | **Do not build** | BrowserPod and Lifo are years ahead and it is not this project's problem. |
+
+The resulting shape matches `zushi`'s: a VM for logic, an opaque-origin iframe for UI, data-only
+across the boundary. The difference is that this repo would carry the CSP and VFS work that zushi
+leaves undocumented — which is exactly where its remaining originality lies.
+
 ## Are the alternatives actually substitutes?
 
 | | Solves isolation? | Substitute? |
@@ -91,6 +163,10 @@ second origin model.
 | **cross-origin-html-embed** | Yes | ⚠️ only where wildcard DNS + SSL are available |
 | **CodeSandbox / StackBlitz** | Yes | ⚠️ only as a hosted dependency |
 | **QuickJS / WASM (Figma model)** | Yes, for logic | ⚠️ only where no DOM is needed |
+| **`quickjs-wasi`, `@tanstack/ai-isolate-quickjs`** | Yes, for logic | ⚠️ logic tier only — **adopt as a component**, not a replacement |
+| **`zushi`** | Yes — same two-layer split | ❌ 3★; reference architecture, and silent on CSP delivery and VFS |
+| **`lifo`** | Feature overlap (VFS), real origin | ❌ different threat model; no documented security model |
+| **BrowserPod** | Yes | ❌ proprietary licence |
 
 Most "competitors" are not alternatives. Penpal and websandbox solve *transport*; this project
 solves *isolation*. Adopting either leaves the security layer unwritten.

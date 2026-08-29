@@ -252,9 +252,12 @@ frames travel back, so a caller cannot await a result and a thrown error arrives
 rather than a rejected promise. The transport for this already exists — it is the framing that is
 missing.
 
-**Work**: a correlated `{id, type, payload}` envelope over the existing port; `sandbox.call(name,
-...args): Promise<T>` on the host and a symmetric `host.call()` inside; keep `execute()` as the
-`scriptUnsafe`-gated escape hatch.
+**Work**: **prefer adopting Penpal over hand-rolling this** — promise-based `postMessage`
+correlation is a commodity, and our `MessageChannel` layer already provides the transport it
+frames (see [ADR-001](ADR-001-continue-or-adopt.md#hybrid-strategy-adopt-the-commodity-keep-the-differentiator);
+confirm licence compatibility first). If built in-house: a correlated `{id, type, payload}`
+envelope over the existing port; `sandbox.call(name, ...args): Promise<T>` on the host and a
+symmetric `host.call()` inside; keep `execute()` as the `scriptUnsafe`-gated escape hatch.
 
 **Acceptance**: `await sandbox.call('sum', 1, 2) === 3`; a sandbox-side throw rejects with the
 original message; identical behaviour in both modes.
@@ -446,7 +449,10 @@ a short contributing note, and `format` / `format:check` scripts.
 
 ## Parity Reference
 
-Where the items above come from. Legend: ✅ shipped · 🟡 partial · ❌ missing · ➖ n/a by design.
+Where the items above come from. This table covers the solutions named in the repo's original
+comparisons; for the 2026 entrants (`quickjs-wasi`, `@tanstack/ai-isolate-quickjs`, `zushi`,
+`lifo`, BrowserPod) see the
+[field scan in ADR-001](ADR-001-continue-or-adopt.md#field-scan--august-2026). Legend: ✅ shipped · 🟡 partial · ❌ missing · ➖ n/a by design.
 
 | Capability | lofi-web-sandbox | websandbox | Penpal | Zoid | cross-origin-embed |
 | :--- | :---: | :---: | :---: | :---: | :---: |
@@ -468,8 +474,12 @@ delivers CSP as an HTTP **header** while keeping the opaque origin via the `sand
 which closes S7, S8 and most of S2 at once, and needs no wildcard DNS (see
 [ADR-001](ADR-001-continue-or-adopt.md); note this is *not* the unique-origin model, which is a
 downgrade on the origin axis); and
-a **timeboxed spike on `quickjs-emscripten`** for a no-DOM, VM-grade tier in the manner of Figma's
-plugin sandbox — output a recommendation, not code.
+a **logic tier evaluation** (upgraded from a speculative spike): as of the
+[2026-08 field scan](ADR-001-continue-or-adopt.md#field-scan--august-2026) this is a solved,
+MIT-licensed commodity — evaluate [`vercel-labs/quickjs-wasi`](https://github.com/vercel-labs/quickjs-wasi)
+(VM snapshot/restore, which also serves B2's `reset()`) and `@tanstack/ai-isolate-quickjs`, with
+[`reearth/zushi`](https://github.com/reearth/zushi) as the reference for how a QuickJS logic tier
+meets an opaque-origin UI tier. Do not write a JS engine.
 
 ---
 
@@ -481,6 +491,9 @@ plugin sandbox — output a recommendation, not code.
 | Iframe-scoped Service Worker ("hub" model) | Considered internally | Needs a sandbox origin that can register SWs, re-opening privilege escalation. See [`ARCHITECTURE_COMPARISON.md`](research/ARCHITECTURE_COMPARISON.md). |
 | `allow-same-origin` for API compatibility | `websandbox` | Root cause of findings 01, 02 and 05. Enforced by T2's deny-list test. |
 | Agent runtime in the trusted base | [`RESEARCH_SANDBOXING.md`](research/RESEARCH_SANDBOXING.md) | Keep the base dumb; agents load as user code so their bugs stay inside the sandbox. |
+| BrowserPod / CheerpX as a dependency | [2026-08 field scan](ADR-001-continue-or-adopt.md#field-scan--august-2026) | Proprietary licence — free only for personal and open-source use. Disqualified as a dependency. |
+| Building a full OS / Linux tier | Same | BrowserPod and `lifo` are years ahead, and it is not this project's problem. |
+| Writing our own JS engine / VM tier | Same | `quickjs-wasi` and `@tanstack/ai-isolate-quickjs` are MIT and maintained. Adopt, don't build. |
 | Nonce-based CSP instead of `'unsafe-inline'` | General best practice | No benefit under an opaque origin with immutable `srcdoc` CSP — [`CSP_CONFIG_RATIONALE.md`](CSP_CONFIG_RATIONALE.md) §3. |
 | Server-side session quotas (rate limit, TTL, LRU) | [Finding 08](research/08_session_exhaustion/README.md), `IMPROVEMENTS.md` §1 | The local-first architecture has no server. Becomes P1 the moment a hosted mode ships; recorded so the requirement is not lost with the server that was removed. |
 
